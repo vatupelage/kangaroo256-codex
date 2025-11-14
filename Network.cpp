@@ -20,6 +20,7 @@
 #include "SECPK1/IntGroup.h"
 #include "Timer.h"
 #include <string.h>
+#include <stdint.h>
 #define _USE_MATH_DEFINES
 #include <math.h>
 #include <algorithm>
@@ -33,6 +34,8 @@
 using namespace std;
 
 static SOCKET serverSock = 0;
+static const char *const NETWORK_TIMEOUT_MESSAGE = "The operation timed out";
+static constexpr int64_t NETWORK_STALL_LIMIT_MS = static_cast<int64_t>(CLIENT_TIMEOUT * 1000.0);
 
 // ------------------------------------------------------------------------------------------------------
 // Common part
@@ -157,12 +160,24 @@ int Kangaroo::Write(SOCKET sock,char *buf,int bufsize,int timeout) {
 
   int total_written = 0;
   int written = 0;
+  int waitStep = (timeout > 0) ? timeout : 1;
+  int64_t stallTime = 0;
 
   while(bufsize > 0)
   {
     // Wait
-    if(!WaitFor(sock,timeout,WAIT_FOR_WRITE))
+    if(!WaitFor(sock,waitStep,WAIT_FOR_WRITE)) {
+      if(lastError == NETWORK_TIMEOUT_MESSAGE) {
+        stallTime += waitStep;
+        if(stallTime >= NETWORK_STALL_LIMIT_MS) {
+          lastError = NETWORK_TIMEOUT_MESSAGE;
+          return -1;
+        }
+        continue;
+      }
       return -1;
+    }
+    stallTime = 0;
 
     // Write
     do
@@ -199,13 +214,24 @@ int Kangaroo::Read(SOCKET sock,char *buf,int bufsize,int timeout) { // Timeout i
 
   int rd = 0;
   int total_read = 0;
+  int waitStep = (timeout > 0) ? timeout : 1;
+  int64_t stallTime = 0;
 
   while( bufsize>0 ) {
 
     // Wait
-    if(!WaitFor(sock,timeout,WAIT_FOR_READ)) {
+    if(!WaitFor(sock,waitStep,WAIT_FOR_READ)) {
+      if(lastError == NETWORK_TIMEOUT_MESSAGE) {
+        stallTime += waitStep;
+        if(stallTime >= NETWORK_STALL_LIMIT_MS) {
+          lastError = NETWORK_TIMEOUT_MESSAGE;
+          return -1;
+        }
+        continue;
+      }
       return -1;
     }
+    stallTime = 0;
 
     // Read
     do
